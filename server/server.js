@@ -13,7 +13,8 @@ app.get('/network_viewer', async function(req, res) {
     res.sendFile(path.resolve(__dirname + "/.." + "/src/network_viewer.html"));
 });
 app.get('/network_viewer.css', async function(req, res) {
-    res.sendFile(__dirname + "/" + "src/network_viewer.css");
+    path.resolve(__dirname + "/.." + "/src/network_viewer.css")
+    res.sendFile(path.resolve(__dirname + "/.." + "/src/network_viewer.css"));
 });
 
 // Web content

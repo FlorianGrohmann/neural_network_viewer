@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="eng">
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+<head>
+</head>
+
+<body>
+    <input type="file" id="datafile" name="file" accept=".h5">
+    <script type="module">
+        import * as hdf5 from "https://cdn.jsdelivr.net/npm/h5wasm@latest/dist/esm/hdf5_hl.js";
+        await hdf5.ready;
+        $(document).ready(function () {
+            $("#datafile").change(async function loadData() {
+                let file = $("#datafile")[0].files[0];
+                let data_filename = file.name;
+                let ab = await file.arrayBuffer();
+                hdf5.FS.writeFile(data_filename, new Uint8Array(ab));
+                let f = new hdf5.File(data_filename, "r");
+                let data = f.get("/model_weights/dense_15/dense_15/bias:0");
+                // Data Schema in Keras: console.log(f.get("model_weights").keys()) -> jeder Key
+                // außer der letzte sind Schichten. -> /model_weights/key/key/bias:0 und
+                // /model_weights/key/key/kernel:0
+                // DropOut/BatchNormalisierung sind eig nur für training wichtig?
+                let layers = f.get("model_weights").keys();
+                let layers_bias= [];
+                let layers_kernel = [];
+                for (let i = 0; i < layers.length-1; i++) {
+                    let key = f.get("model_weights").keys()[i];
+                    let data = f.get("/model_weights/" + key + "/" + key + "/bias:0");
+                    layers_bias.push(data)
+                    data = f.get("/model_weights/" + key + "/" + key + "/kernel:0");
+                    layers_kernel.push(data)
+                }
+
+                // Für die Visualisierung von einem inference durchlauf muss erstmal die activation function
+                // für jede Schicht ausgelesen werden. Danach muss noch die Logik für die Berechnung
+                // der Aktivität jedes Neurons gemacht werden
+                // Hier sind die activation functions bei keras drin
+                console.log(f.attrs["model_config"].value);
+
+
+                // Pytorch benutzt kein h5, sondern Python dictionarys. Muss auch noch implementiert werden
+                f.close()
+            })
+        })
+    </script>
+</body>
+
+</html>

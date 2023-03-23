@@ -1,29 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
-	<head>
-		<title>three.js webgl - interactive cubes (gpu)</title>
-		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-		<link type="text/css" rel="stylesheet" href="main.css">
-		<style>
-			body {
-				background-color: #fff;
-				color: #444;
-			}
-			a {
-				color: #08f;
-			}
-		</style>
-	</head>
-	<body>
 
-		<div id="info">
-			<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> webgl - gpu picking
-		</div>
+<head>
+	<title>Network_Viewer</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link type="text/css" rel="stylesheet" href="network_viewer.css">
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+</head>
 
-		<div id="container"></div>
+<body>
 
-		<script type="importmap">
+	<input type="file" id="upload" name="file" accept=".h5">
+
+	<div id="container"></div>
+	<script type="importmap">
 			{
 				"imports": {
 						"three": "./build/three.module.js",
@@ -33,234 +24,301 @@
 				}
 			}
 		</script>
+	<script type="module">
 
-		<script type="module">
+		import * as THREE from 'three';
 
-			import * as THREE from 'three';
+		import Stats from 'three/addons/libs/stats.module.js';
 
-			import Stats from 'three/addons/libs/stats.module.js';
+		import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+		import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 
-			import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
-			import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+		let container, stats;
+		let camera, controls, scene, renderer;
+		let pickingTexture, pickingScene;
+		let highlightBox;
 
-			let container, stats;
-			let camera, controls, scene, renderer;
-			let pickingTexture, pickingScene;
-			let highlightBox;
+		const pointer = new THREE.Vector2();
+		const offset = new THREE.Vector3(10, 10, 10);
 
-			const pickingData = [];
+		const usersettings = new Map();
+		usersettings.set('user_3D_mode', true);
+		usersettings.set('neuron_size', [5, 5, 5]);
 
-			const pointer = new THREE.Vector2();
-			const offset = new THREE.Vector3( 10, 10, 10 );
+		function init(layers_bias, layers_kernel) {
 
-			init();
-			animate();
+			container = document.getElementById('container');
 
-			function init() {
+			camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 1, 100000);
+			camera.position.z = 1000;
 
-				container = document.getElementById( 'container' );
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color(0x000000);
 
-				camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 1, 10000 );
-				camera.position.z = 1000;
+			pickingScene = new THREE.Scene();
+			pickingTexture = new THREE.WebGLRenderTarget(1, 1);
 
-				scene = new THREE.Scene();
-				scene.background = new THREE.Color( 0xffffff );
+			scene.add(new THREE.AmbientLight(0x555555));
 
-				pickingScene = new THREE.Scene();
-				pickingTexture = new THREE.WebGLRenderTarget( 1, 1 );
+			const light = new THREE.SpotLight(0xffffff, 1.5);
+			light.position.set(0, 500, 2000);
+			scene.add(light);
 
-				scene.add( new THREE.AmbientLight( 0x555555 ) );
+			const in_out_NeuronMaterial = new THREE.MeshBasicMaterial({ color: 0xfdfccb });
+			const hiddenNeuronMaterial = new THREE.MeshBasicMaterial({ color: 0xfdfccb });
+			const defaultLineMaterial = new THREE.LineBasicMaterial({ color: 0xff00ff });
 
-				const light = new THREE.SpotLight( 0xffffff, 1.5 );
-				light.position.set( 0, 500, 2000 );
-				scene.add( light );
 
-				const pickingMaterial = new THREE.MeshBasicMaterial( { vertexColors: true } );
-				const defaultMaterial = new THREE.MeshPhongMaterial( { color: 0xffffff, flatShading: true, vertexColors: true, shininess: 0	} );
+			// Refactor:
+			// Faster without theses arrays
+			// more robust using metadata
+			// alot of memory is used..
 
-				function applyVertexColors( geometry, color ) {
+			// generate neuron_layers
+			const neuron_layers = [];
+			const neuron_layers_info = [];
 
-					const position = geometry.attributes.position;
-					const colors = [];
+			// first neuron layers = input layer
+			function make_input_layer() {
+				const one_neuron_layer = [];
+				const length = layers_kernel[0].value.length / layers_bias[0].value.length;
 
-					for ( let i = 0; i < position.count; i ++ ) {
+				if (usersettings.get("user_3D_mode")) {
+					const sqrt = Math.trunc(Math.sqrt(length));
+					let length_z = (sqrt -1 + (sqrt - Math.trunc(length / sqrt))*-1 )*50;
+					let length_y = (sqrt-1)*50;
 
-						colors.push( color.r, color.g, color.b );
+					for (let i = 0; i < length; i++) {
+						const geometry = new THREE.BoxGeometry(5, 5, 5);
+						const inputNeuron = new THREE.Mesh(geometry, in_out_NeuronMaterial);
+						let position_x = inputNeuron.position.x = -1 * 150;
+						let position_y = inputNeuron.position.y = (i % sqrt) * 50;
+						let position_z = inputNeuron.position.z = Math.trunc(i / sqrt) * 50;
+						scene.add(inputNeuron);
 
+						let bias = 0;
+						let neuron = [position_x, position_y, position_z, bias];
+						one_neuron_layer.push(neuron);
 					}
-
-					geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
-
-				}
-
-				const geometriesDrawn = [];
-				const geometriesPicking = [];
-
-				const matrix = new THREE.Matrix4();
-				const quaternion = new THREE.Quaternion();
-				const color = new THREE.Color();
-
-				for ( let i = 0; i < 5000; i ++ ) {
-
-					let geometry = new THREE.BoxGeometry();
-
-					const position = new THREE.Vector3();
-					position.x = Math.random() * 10000 - 5000;
-					position.y = Math.random() * 6000 - 3000;
-					position.z = Math.random() * 8000 - 4000;
-
-					const rotation = new THREE.Euler();
-					rotation.x = Math.random() * 2 * Math.PI;
-					rotation.y = Math.random() * 2 * Math.PI;
-					rotation.z = Math.random() * 2 * Math.PI;
-
-					const scale = new THREE.Vector3();
-					scale.x = Math.random() * 200 + 100;
-					scale.y = Math.random() * 200 + 100;
-					scale.z = Math.random() * 200 + 100;
-
-					quaternion.setFromEuler( rotation );
-					matrix.compose( position, quaternion, scale );
-
-					geometry.applyMatrix4( matrix );
-
-					// give the geometry's vertices a random color, to be displayed
-
-					applyVertexColors( geometry, color.setHex( Math.random() * 0xffffff ) );
-
-					geometriesDrawn.push( geometry );
-
-					geometry = geometry.clone();
-
-					// give the geometry's vertices a color corresponding to the "id"
-
-					applyVertexColors( geometry, color.setHex( i ) );
-
-					geometriesPicking.push( geometry );
-
-					pickingData[ i ] = {
-
-						position: position,
-						rotation: rotation,
-						scale: scale
-
-					};
-
-				}
-
-				const objects = new THREE.Mesh( BufferGeometryUtils.mergeBufferGeometries( geometriesDrawn ), defaultMaterial );
-				scene.add( objects );
-
-				pickingScene.add( new THREE.Mesh( BufferGeometryUtils.mergeBufferGeometries( geometriesPicking ), pickingMaterial ) );
-
-				highlightBox = new THREE.Mesh(
-					new THREE.BoxGeometry(),
-					new THREE.MeshLambertMaterial( { color: 0xffff00 }
-					) );
-				scene.add( highlightBox );
-
-				renderer = new THREE.WebGLRenderer( { antialias: true } );
-				renderer.setPixelRatio( window.devicePixelRatio );
-				renderer.setSize( window.innerWidth, window.innerHeight );
-				container.appendChild( renderer.domElement );
-
-				controls = new TrackballControls( camera, renderer.domElement );
-				controls.rotateSpeed = 1.0;
-				controls.zoomSpeed = 1.2;
-				controls.panSpeed = 0.8;
-				controls.noZoom = false;
-				controls.noPan = false;
-				controls.staticMoving = true;
-				controls.dynamicDampingFactor = 0.3;
-
-				stats = new Stats();
-				container.appendChild( stats.dom );
-
-				renderer.domElement.addEventListener( 'pointermove', onPointerMove );
-
-			}
-
-			//
-
-			function onPointerMove( e ) {
-
-				pointer.x = e.clientX;
-				pointer.y = e.clientY;
-
-			}
-
-			function animate() {
-
-				requestAnimationFrame( animate );
-
-				render();
-				stats.update();
-
-			}
-
-			function pick() {
-
-				//render the picking scene off-screen
-
-				// set the view offset to represent just a single pixel under the mouse
-
-				camera.setViewOffset( renderer.domElement.width, renderer.domElement.height, pointer.x * window.devicePixelRatio | 0, pointer.y * window.devicePixelRatio | 0, 1, 1 );
-
-				// render the scene
-
-				renderer.setRenderTarget( pickingTexture );
-				renderer.render( pickingScene, camera );
-
-				// clear the view offset so rendering returns to normal
-
-				camera.clearViewOffset();
-
-				//create buffer for reading single pixel
-
-				const pixelBuffer = new Uint8Array( 4 );
-
-				//read the pixel
-
-				renderer.readRenderTargetPixels( pickingTexture, 0, 0, 1, 1, pixelBuffer );
-
-				//interpret the pixel as an ID
-
-				const id = ( pixelBuffer[ 0 ] << 16 ) | ( pixelBuffer[ 1 ] << 8 ) | ( pixelBuffer[ 2 ] );
-				const data = pickingData[ id ];
-
-				if ( data ) {
-
-					//move our highlightBox so that it surrounds the picked object
-
-					if ( data.position && data.rotation && data.scale ) {
-
-						highlightBox.position.copy( data.position );
-						highlightBox.rotation.copy( data.rotation );
-						highlightBox.scale.copy( data.scale ).add( offset );
-						highlightBox.visible = true;
-
-					}
-
+					neuron_layers_info.push([(-1 * 150),0 ,0, length_y, length_z])
 				} else {
+					for (let i = 0; i < length; i++) {
+						const geometry = new THREE.BoxGeometry(5, 5, 5);
+						const inputNeuron = new THREE.Mesh(geometry, in_out_NeuronMaterial);
+						let position_x = inputNeuron.position.x = -1 * 150;
+						let position_y = inputNeuron.position.y = i * 50;
+						let position_z = inputNeuron.position.z = 0;
+						scene.add(inputNeuron);
 
-					highlightBox.visible = false;
-
+						let bias = 0;
+						let neuron = [position_x, position_y, position_z, bias];
+						one_neuron_layer.push(neuron);
+					}
 				}
+				neuron_layers.push(one_neuron_layer);
 
 			}
+			// hidden layers and output layer
+			function make_hidden_layers() {
+				if (usersettings.get("user_3D_mode")) {
+					for (let a = 0; a < layers_bias.length; a++) {
+						const one_neuron_layer = [];
+						const sqrt = Math.trunc(Math.sqrt(layers_bias[a].value.length));
+						let length_z = (sqrt - 1 + (sqrt - Math.trunc(layers_bias[a].value.length / sqrt))*-1 )*50;
+						let length_y = (sqrt-1)*50;
 
-			function render() {
+						let offset_y = neuron_layers_info[a][1] + (neuron_layers_info[a][3]-length_y)/2;
+						let offset_z = neuron_layers_info[a][2] + (neuron_layers_info[a][4]-length_z)/2;
+						for (let i = 0; i < layers_bias[a].value.length; i++) {
+							const geometry = new THREE.BoxGeometry(5, 5, 5);
+							const hiddenNeuron = new THREE.Mesh(geometry, hiddenNeuronMaterial);
+							let position_x = hiddenNeuron.position.x = a * 150;
+							let position_y = hiddenNeuron.position.y = ((i % sqrt) * 50) + offset_y;
+							let position_z = hiddenNeuron.position.z = (Math.trunc(i / sqrt) * 50) + offset_z;
+							scene.add(hiddenNeuron);
 
-				controls.update();
+							let bias = layers_bias[a].value[i];
+							let neuron = [position_x, position_y, position_z, bias];
+							one_neuron_layer.push(neuron);
+						}
+						neuron_layers.push(one_neuron_layer);
+						neuron_layers_info.push([(a * 150),offset_y, offset_z, length_y, length_z]);
+					}
+				} else {
+					for (let a = 0; a < layers_bias.length; a++) {
+						const one_neuron_layer = [];
+						for (let i = 0; i < layers_bias[a].value.length; i++) {
+							const geometry = new THREE.BoxGeometry(5, 5, 5);
+							const hiddenNeuron = new THREE.Mesh(geometry, hiddenNeuronMaterial);
+							let position_x = hiddenNeuron.position.x = a * 150;
+							let position_y = hiddenNeuron.position.y = i * 50;
+							let position_z = hiddenNeuron.position.z = 0;
+							scene.add(hiddenNeuron);
 
-				pick();
-
-				renderer.setRenderTarget( null );
-				renderer.render( scene, camera );
-
+							let bias = layers_bias[a].value[i];
+							let neuron = [position_x, position_y, position_z, bias];
+							one_neuron_layer.push(neuron);
+						}
+						neuron_layers.push(one_neuron_layer);
+					}
+				}
 			}
 
-		</script>
+			function generate_synapses_all() {
+				for (let a = 0; a < neuron_layers.length - 1; a++) {
+					for (let i = 0; i < neuron_layers[a].length; i++) {
+						let position_x = neuron_layers[a][i][0];
+						let position_y = neuron_layers[a][i][1];
+						let position_z = neuron_layers[a][i][2];
+						for (let j = 0; j < neuron_layers[a + 1].length; j++) {
+							let position_x_to = neuron_layers[a + 1][j][0];
+							let position_y_to = neuron_layers[a + 1][j][1];
+							let position_z_to = neuron_layers[a + 1][j][2];
 
-	</body>
+							const points = [];
+							points.push(new THREE.Vector3(position_x, position_y, position_z));
+							points.push(new THREE.Vector3(position_x_to, position_y_to, position_z_to));
+							const geometry = new THREE.BufferGeometry().setFromPoints(points);
+							// -4 -> 0 <- +4
+							// helles blau -> schwarz <- gelb
+							// 0xRRGGBB
+							// 0x00FFFF = Türkis -> 0x0000FF = blau -> 0x000000 = schwarz -> 0xFF0000 = rot -> 0xFFFF00 = Gelb
+							// -4 -> -2 -> 0 -> 2 -> 4
+							// 0,0,15,15,15,15 ... 15,15,15,15,0,0
+							// Wert/4 * 15 bsp -2,3/4 = -0,575*15 = -8,625 Zweitfarbe = Wert/4 * 15 - 5
+
+							// Berechnung der Position des Kernel Wertes der Verbindung im Kernel Array...
+							let kernel_value = layers_kernel[a].value[i*neuron_layers[a + 1].length + j]
+							let color_combined;
+							if(kernel_value < 0){
+								let kernel_value_norm = Math.trunc(kernel_value/3 * 15)*-1;
+								if(kernel_value_norm > 15){
+									kernel_value_norm = 15
+								}
+								let blue = kernel_value_norm.toString(16);
+								let green = (kernel_value_norm-5)
+								if(green < 0){
+									green = 0
+								}
+								green = green.toString(16);
+								color_combined = "0x" + "00" + green + green + blue + blue;
+							}else{
+								let kernel_value_norm = Math.trunc(kernel_value/3 * 15);
+								if(kernel_value_norm > 15){
+									kernel_value_norm = 15
+								}
+								let red = kernel_value_norm.toString(16);
+								let green = (kernel_value_norm-5)
+								if(green < 0){
+									green = 0
+								}
+								green = green.toString(16);
+								color_combined = "0x" + red + red + green + green + "00";
+							}
+							// 0x002277
+							const colored_line_material = new THREE.LineBasicMaterial({ color: parseInt(color_combined) });
+							const line = new THREE.Line(geometry, colored_line_material);
+							scene.add(line);
+						}
+					}
+				}
+			}
+			make_input_layer();
+			make_hidden_layers();
+			generate_synapses_all();
+
+
+
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			container.appendChild(renderer.domElement);
+
+			controls = new TrackballControls(camera, renderer.domElement);
+			controls.rotateSpeed = 1.0;
+			controls.zoomSpeed = 1.2;
+			controls.panSpeed = 0.8;
+			controls.noZoom = false;
+			controls.noPan = false;
+			controls.staticMoving = true;
+			controls.dynamicDampingFactor = 0.3;
+
+			stats = new Stats();
+			container.appendChild(stats.dom);
+
+			renderer.domElement.addEventListener('pointermove', onPointerMove);
+
+		}
+
+
+		//
+
+		function onPointerMove(e) {
+
+			pointer.x = e.clientX;
+			pointer.y = e.clientY;
+
+		}
+
+		function animate() {
+
+			requestAnimationFrame(animate);
+
+			render();
+			stats.update();
+
+		}
+
+		function render() {
+
+			controls.update();
+
+			renderer.setRenderTarget(null);
+			renderer.render(scene, camera);
+
+		}
+
+
+		// h5 loader
+		import * as hdf5 from "https://cdn.jsdelivr.net/npm/h5wasm@latest/dist/esm/hdf5_hl.js";
+		await hdf5.ready;
+		$(document).ready(function () {
+			$("#upload").change(async function loadData() {
+				let file = $("#upload")[0].files[0];
+				let data_filename = file.name;
+				let ab = await file.arrayBuffer();
+				hdf5.FS.writeFile(data_filename, new Uint8Array(ab));
+				let f = new hdf5.File(data_filename, "r");
+				let data = f.get("/model_weights/dense_15/dense_15/bias:0");
+				// Data Schema in Keras: console.log(f.get("model_weights").keys()) -> jeder Key
+				// außer der letzte sind Schichten. -> /model_weights/key/key/bias:0 und
+				// /model_weights/key/key/kernel:0
+				// DropOut/BatchNormalisierung sind eig nur für training wichtig?
+				let layers = f.get("model_weights").keys();
+				let layers_bias = [];
+				let layers_kernel = [];
+				for (let i = 0; i < layers.length - 1; i++) {
+					let key = f.get("model_weights").keys()[i];
+					let data = f.get("/model_weights/" + key + "/" + key + "/bias:0");
+					layers_bias.push(data)
+					data = f.get("/model_weights/" + key + "/" + key + "/kernel:0");
+					layers_kernel.push(data)
+				}
+				// Für die Visualisierung von einem inference durchlauf muss erstmal die activation function
+				// für jede Schicht ausgelesen werden. Danach muss noch die Logik für die Berechnung
+				// der Aktivität jedes Neurons gemacht werden
+				// Hier sind die activation functions bei keras drin
+				console.log(f.attrs["model_config"].value);
+				// Pytorch benutzt kein h5, sondern Python dictionarys. Muss auch noch implementiert werden
+
+				init(layers_bias, layers_kernel);
+				animate();
+				f.close()
+			})
+		})
+
+	</script>
+
+</body>
+
 </html>
